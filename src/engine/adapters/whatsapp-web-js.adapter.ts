@@ -69,8 +69,45 @@ export class WhatsAppWebJsAdapter extends EventEmitter implements IWhatsAppEngin
     this.setStatus(EngineStatus.INITIALIZING);
 
     try {
-      // Build puppeteer args, including proxy if configured
-      const puppeteerArgs = this.config.puppeteer?.args || [
+      await this.initializeClient();
+    } catch (error) {
+      await this.safeDestroyClient();
+      this.setStatus(EngineStatus.FAILED);
+      throw error;
+    }
+  }
+
+  private async initializeClient(): Promise<void> {
+    const maxAttempts = 2;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      this.client = this.createClient();
+      this.setupEventHandlers();
+
+      try {
+        await this.client.initialize();
+        return;
+      } catch (error) {
+        const shouldRetry = attempt < maxAttempts && this.isExecutionContextDestroyedError(error);
+
+        await this.safeDestroyClient();
+
+        if (!shouldRetry) {
+          throw error;
+        }
+
+        this.logger.warn('Retrying WhatsApp-web.js initialization after execution context reset', {
+          attempt,
+          action: 'engine_init_retry',
+        });
+      }
+    }
+  }
+
+  private createClient(): Client {
+    // Build puppeteer args, including proxy if configured
+    const puppeteerArgs = [
+      ...(this.config.puppeteer?.args || [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
@@ -78,33 +115,48 @@ export class WhatsAppWebJsAdapter extends EventEmitter implements IWhatsAppEngin
         '--no-first-run',
         '--no-zygote',
         '--disable-gpu',
-      ];
+      ]),
+    ];
 
-      // Add proxy configuration if provided
-      if (this.config.proxy) {
-        puppeteerArgs.push(`--proxy-server=${this.config.proxy.url}`);
-        this.logger.log(
-          `Using proxy: ${this.config.proxy.type}://${this.config.proxy.url.replace(/:[^:@]*@/, ':***@')}`,
-        );
-      }
-
-      this.client = new Client({
-        authStrategy: new LocalAuth({
-          clientId: this.config.sessionId,
-          dataPath: path.resolve(this.config.sessionDataPath),
-        }),
-        puppeteer: {
-          headless: this.config.puppeteer?.headless ?? true,
-          args: puppeteerArgs,
-        },
-      });
-
-      this.setupEventHandlers();
-      await this.client.initialize();
-    } catch (error) {
-      this.setStatus(EngineStatus.FAILED);
-      throw error;
+    // Add proxy configuration if provided
+    if (this.config.proxy) {
+      puppeteerArgs.push(`--proxy-server=${this.config.proxy.url}`);
+      this.logger.log(
+        `Using proxy: ${this.config.proxy.type}://${this.config.proxy.url.replace(/:[^:@]*@/, ':***@')}`,
+      );
     }
+
+    return new Client({
+      authStrategy: new LocalAuth({
+        clientId: this.config.sessionId,
+        dataPath: path.resolve(this.config.sessionDataPath),
+      }),
+      puppeteer: {
+        headless: this.config.puppeteer?.headless ?? true,
+        args: puppeteerArgs,
+      },
+    });
+  }
+
+  private async safeDestroyClient(): Promise<void> {
+    if (!this.client) {
+      return;
+    }
+
+    const client = this.client;
+    this.client = null;
+
+    try {
+      await client.destroy();
+    } catch (error) {
+      this.logger.warn('Client cleanup failed during initialize', String(error));
+    }
+  }
+
+  private isExecutionContextDestroyedError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+
+    return /Execution context was destroyed|Protocol error \(Runtime\.callFunctionOn\)/i.test(message);
   }
 
   private setupEventHandlers(): void {

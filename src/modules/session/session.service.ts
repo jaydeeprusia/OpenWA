@@ -231,8 +231,9 @@ export class SessionService implements OnModuleDestroy, OnModuleInit {
     });
     this.engines.set(id, engine);
 
-    await engine.initialize({
-      onQRCode: (): void => {
+    try {
+      await engine.initialize({
+        onQRCode: (): void => {
         this.logger.log('QR code generated', {
           sessionId: id,
           action: 'qr_generated',
@@ -250,7 +251,7 @@ export class SessionService implements OnModuleDestroy, OnModuleInit {
 
         void this.updateStatus(id, SessionStatus.QR_READY);
       },
-      onReady: (phone: string, pushName: string): void => {
+        onReady: (phone: string, pushName: string): void => {
         this.logger.log(`Session ready: ${phone}`, {
           sessionId: id,
           phone,
@@ -282,7 +283,7 @@ export class SessionService implements OnModuleDestroy, OnModuleInit {
           lastActiveAt: new Date(),
         });
       },
-      onMessage: (message): void => {
+        onMessage: (message): void => {
         this.logger.debug(`Message received from ${message.from}`, {
           sessionId: id,
           messageId: message.id,
@@ -312,7 +313,7 @@ export class SessionService implements OnModuleDestroy, OnModuleInit {
             this.eventsGateway.emitMessage(id, finalMessage as Record<string, unknown>);
           });
       },
-      onDisconnected: (reason: string): void => {
+        onDisconnected: (reason: string): void => {
         this.logger.warn(`Session disconnected: ${reason}`, {
           sessionId: id,
           reason,
@@ -334,7 +335,7 @@ export class SessionService implements OnModuleDestroy, OnModuleInit {
         // Attempt to reconnect
         this.scheduleReconnect(id, session);
       },
-      onStateChanged: (engineState: EngineStatus): void => {
+        onStateChanged: (engineState: EngineStatus): void => {
         const statusMap: Record<EngineStatus, SessionStatus> = {
           [EngineStatus.DISCONNECTED]: SessionStatus.DISCONNECTED,
           [EngineStatus.INITIALIZING]: SessionStatus.INITIALIZING,
@@ -347,10 +348,25 @@ export class SessionService implements OnModuleDestroy, OnModuleInit {
         if (newStatus) {
           void this.updateStatus(id, newStatus);
         }
-      },
-    });
+        },
+      });
 
-    await this.updateStatus(id, SessionStatus.INITIALIZING);
+      await this.updateStatus(id, SessionStatus.INITIALIZING);
+    } catch (error) {
+      this.engines.delete(id);
+      this.cancelReconnect(id);
+
+      try {
+        await engine.destroy();
+      } catch (destroyError) {
+        this.logger.warn(
+          `Failed to clean up engine after startup error for session: ${session.name} - ${String(destroyError)}`,
+        );
+      }
+
+      await this.updateStatus(id, SessionStatus.FAILED);
+      throw error;
+    }
   }
 
   private scheduleReconnect(id: string, session: Session): void {
