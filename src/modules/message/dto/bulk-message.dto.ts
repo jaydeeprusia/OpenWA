@@ -43,16 +43,16 @@ class BulkMessageContentDto {
 class BulkMessageItemDto {
   @ApiProperty({ description: 'Recipient chat ID', example: '628123456789@c.us' })
   @IsString()
-  chatId: string;
+  chatId!: string;
 
   @ApiProperty({ description: 'Message type', enum: ['text', 'image', 'video', 'audio', 'document'] })
   @IsString()
-  type: 'text' | 'image' | 'video' | 'audio' | 'document';
+  type!: 'text' | 'image' | 'video' | 'audio' | 'document';
 
   @ApiProperty({ description: 'Message content based on type' })
   @ValidateNested()
   @Type(() => BulkMessageContentDto)
-  content: BulkMessageContentDto;
+  content!: BulkMessageContentDto;
 
   @ApiPropertyOptional({ description: 'Variables for template substitution' })
   @IsOptional()
@@ -76,6 +76,13 @@ class BulkMessageOptionsDto {
   @IsOptional()
   @IsBoolean()
   stopOnError?: boolean;
+
+  @ApiPropertyOptional({ description: 'Number of messages to send in parallel (min: 1, max: 10)', default: 1 })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(10)
+  concurrency?: number;
 }
 
 export class SendBulkMessageDto {
@@ -84,12 +91,12 @@ export class SendBulkMessageDto {
   @IsString()
   batchId?: string;
 
-  @ApiProperty({ description: 'Array of messages (max 100 per request)', type: [BulkMessageItemDto] })
+  @ApiProperty({ description: 'Array of messages (max 256 per request)', type: [BulkMessageItemDto] })
   @IsArray()
-  @ArrayMaxSize(100)
+  @ArrayMaxSize(256)
   @ValidateNested({ each: true })
   @Type(() => BulkMessageItemDto)
-  messages: BulkMessageItemDto[];
+  messages!: BulkMessageItemDto[];
 
   @ApiPropertyOptional({ description: 'Batch processing options' })
   @IsOptional()
@@ -100,17 +107,17 @@ export class SendBulkMessageDto {
 
 export class BulkMessageResponseDto {
   @ApiProperty()
-  batchId: string;
+  batchId!: string;
 
   @ApiProperty()
-  status: string;
+  status!: string;
 
   @ApiProperty()
-  totalMessages: number;
+  totalMessages!: number;
 
   @ApiPropertyOptional()
   estimatedCompletionTime?: string;
 
   @ApiProperty()
-  statusUrl: string;
+  statusUrl!: string;
 }

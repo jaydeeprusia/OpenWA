@@ -53,6 +53,7 @@ export class BulkMessageService {
       delayBetweenMessages: dto.options?.delayBetweenMessages ?? 3000,
       randomizeDelay: dto.options?.randomizeDelay ?? true,
       stopOnError: dto.options?.stopOnError ?? false,
+      concurrency: dto.options?.concurrency ?? 3,
     };
 
     const progress: BatchProgress = {
@@ -145,63 +146,76 @@ export class BulkMessageService {
     }
 
     const results: BatchMessageResult[] = batch.results || [];
+    let nextIndex = batch.currentIndex ?? 0;
+    const concurrency = Math.max(1, Math.min(batch.options.concurrency ?? 1, batch.messages.length));
 
-    for (let i = batch.currentIndex; i < batch.messages.length; i++) {
-      // Check for cancellation
-      if (!this.processingBatches.get(batch.id)) {
-        this.logger.log(`Batch ${batch.batchId} cancelled at index ${i}`);
+    const sendChunk = async (chunk: Array<{ index: number; msg: MessageBatch['messages'][number] }>) => {
+      const promises = chunk.map(async ({ index, msg }) => {
+        const result: BatchMessageResult = {
+          chatId: msg.chatId,
+          status: BatchMessageStatus.PENDING,
+        };
+
+        try {
+          const content: BulkMessageContent = this.applyVariables(msg.content as BulkMessageContent, msg.variables);
+          const messageResult = await this.sendMessage(engine, msg.chatId, msg.type, content);
+
+          result.status = BatchMessageStatus.SENT;
+          result.messageId = messageResult.id;
+          result.sentAt = new Date();
+          batch.progress.sent++;
+          batch.progress.pending--;
+
+          this.logger.debug(`Batch ${batch.batchId}: Sent message ${index + 1}/${batch.messages.length} to ${msg.chatId}`);
+        } catch (error) {
+          result.status = BatchMessageStatus.FAILED;
+          result.error = {
+            code: 'SEND_FAILED',
+            message: String(error),
+          };
+          batch.progress.failed++;
+          batch.progress.pending--;
+
+          this.logger.warn(`Batch ${batch.batchId}: Failed message ${index + 1} to ${msg.chatId}: ${String(error)}`);
+        }
+
+        return result;
+      });
+
+      const settled = await Promise.allSettled(promises);
+      for (const entry of settled) {
+        if (entry.status === 'fulfilled') {
+          results.push(entry.value);
+        } else {
+          results.push({
+            chatId: 'unknown',
+            status: BatchMessageStatus.FAILED,
+            error: { code: 'SEND_FAILED', message: String(entry.reason) },
+          });
+          batch.progress.failed++;
+          batch.progress.pending--;
+          this.logger.warn(`Batch ${batch.batchId}: Parallel send failed: ${String(entry.reason)}`);
+        }
+      }
+    };
+
+    while (nextIndex < batch.messages.length && this.processingBatches.get(batch.id)) {
+      const chunk = batch.messages
+        .map((msg, index) => ({ index, msg }))
+        .slice(nextIndex, nextIndex + concurrency);
+      nextIndex += chunk.length;
+      batch.currentIndex = nextIndex;
+
+      await sendChunk(chunk);
+      batch.results = results;
+      await this.batchRepository.save(batch);
+
+      if (batch.options.stopOnError && results.some(r => r.status === BatchMessageStatus.FAILED)) {
+        this.processingBatches.set(batch.id, false);
         break;
       }
 
-      const msg = batch.messages[i];
-      const result: BatchMessageResult = {
-        chatId: msg.chatId,
-        status: BatchMessageStatus.PENDING,
-      };
-
-      try {
-        // Apply template variables
-        const content: BulkMessageContent = this.applyVariables(msg.content as BulkMessageContent, msg.variables);
-
-        // Send message based on type
-        const messageResult = await this.sendMessage(engine, msg.chatId, msg.type, content);
-
-        result.status = BatchMessageStatus.SENT;
-        result.messageId = messageResult.id;
-        result.sentAt = new Date();
-        batch.progress.sent++;
-        batch.progress.pending--;
-
-        this.logger.debug(`Batch ${batch.batchId}: Sent message ${i + 1}/${batch.messages.length} to ${msg.chatId}`);
-      } catch (error) {
-        result.status = BatchMessageStatus.FAILED;
-        result.error = {
-          code: 'SEND_FAILED',
-          message: String(error),
-        };
-        batch.progress.failed++;
-        batch.progress.pending--;
-
-        this.logger.warn(`Batch ${batch.batchId}: Failed message ${i + 1} to ${msg.chatId}: ${String(error)}`);
-
-        if (batch.options.stopOnError) {
-          batch.status = BatchStatus.FAILED;
-          results.push(result);
-          break;
-        }
-      }
-
-      results.push(result);
-      batch.currentIndex = i + 1;
-      batch.results = results;
-
-      // Save progress periodically (every 10 messages or last message)
-      if (i % 10 === 0 || i === batch.messages.length - 1) {
-        await this.batchRepository.save(batch);
-      }
-
-      // Delay before next message (except for last)
-      if (i < batch.messages.length - 1 && this.processingBatches.get(batch.id)) {
+      if (nextIndex < batch.messages.length && this.processingBatches.get(batch.id)) {
         const delay = this.calculateDelay(batch.options);
         await this.sleep(delay);
       }

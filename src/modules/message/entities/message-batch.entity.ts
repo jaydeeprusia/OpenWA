@@ -63,6 +63,7 @@ export class MessageBatch {
     delayBetweenMessages: number;
     randomizeDelay: boolean;
     stopOnError: boolean;
+    concurrency?: number;
   };
 
   @Column({ type: jsonColumnType(), nullable: true })

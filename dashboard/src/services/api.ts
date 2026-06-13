@@ -74,6 +74,28 @@ export interface MessageResponse {
   timestamp: number;
 }
 
+export interface BulkMessageItem {
+  chatId: string;
+  type: 'text' | 'image' | 'video' | 'audio' | 'document';
+  content: {
+    text?: string;
+    caption?: string;
+    image?: { url?: string; base64?: string; mimetype?: string };
+    video?: { url?: string; base64?: string; mimetype?: string };
+    audio?: { url?: string; base64?: string; mimetype?: string };
+    document?: { url?: string; base64?: string; mimetype?: string; filename?: string };
+  };
+  variables?: Record<string, string>;
+}
+
+export interface BulkMessageResponse {
+  batchId: string;
+  status: string;
+  totalMessages: number;
+  estimatedCompletionTime?: string;
+  statusUrl: string;
+}
+
 export interface HealthStatus {
   status: 'ok' | 'error';
   timestamp?: string;
@@ -289,6 +311,11 @@ export const messageApi = {
     request<MessageResponse>(`/sessions/${sessionId}/messages/send-document`, {
       method: 'POST',
       body: JSON.stringify({ chatId, url, filename }),
+    }),
+  sendBulk: (sessionId: string, messages: BulkMessageItem[], options?: { concurrency?: number }) =>
+    request<BulkMessageResponse>(`/sessions/${sessionId}/messages/send-bulk`, {
+      method: 'POST',
+      body: JSON.stringify({ messages, options }),
     }),
 };
 

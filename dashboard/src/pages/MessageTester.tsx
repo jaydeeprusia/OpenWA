@@ -11,6 +11,9 @@ import './MessageTester.css';
 interface ApiResponse {
   success: boolean;
   messageId?: string;
+  batchId?: string;
+  totalMessages?: number;
+  statusUrl?: string;
   timestamp: string;
   error?: string;
 }
@@ -25,11 +28,13 @@ export function MessageTester() {
   const sessions = allSessions.filter(s => s.status === 'ready');
   const [session, setSession] = useState('');
   const [recipient, setRecipient] = useState('');
-  const [recipientType, setRecipientType] = useState<'personal' | 'group'>('personal');
+  const [recipientType, setRecipientType] = useState<'personal' | 'group' | 'bulk'>('personal');
   const [selectedGroup, setSelectedGroup] = useState('');
+  const [bulkRecipients, setBulkRecipients] = useState('');
   const [messageType, setMessageType] = useState<typeof messageTypes[number]>('text');
   const [content, setContent] = useState('');
   const [mediaUrl, setMediaUrl] = useState('');
+  const [concurrency, setConcurrency] = useState(3);
   const [isLoading, setIsLoading] = useState(false);
   const [response, setResponse] = useState<ApiResponse | null>(null);
 
@@ -55,31 +60,74 @@ export function MessageTester() {
 
   const handleSend = async () => {
     const targetId = recipientType === 'group' ? selectedGroup : recipient;
-    if (!session || !targetId) return;
+    if (!session || (recipientType === 'personal' && !targetId) || (recipientType === 'bulk' && !bulkRecipients.trim())) {
+      return;
+    }
     setIsLoading(true);
     setResponse(null);
 
-    const chatId = recipientType === 'group' ? targetId : targetId.replace(/[^0-9]/g, '') + '@c.us';
-
     try {
       let result;
-      if (messageType === 'text') {
-        result = await messageApi.sendText(session, chatId, content);
-      } else if (messageType === 'image') {
-        result = await messageApi.sendImage(session, chatId, mediaUrl, content);
-      } else if (messageType === 'video') {
-        result = await messageApi.sendVideo(session, chatId, mediaUrl, content);
-      } else if (messageType === 'audio') {
-        result = await messageApi.sendAudio(session, chatId, mediaUrl);
-      } else {
-        result = await messageApi.sendDocument(session, chatId, mediaUrl, content);
-      }
 
-      setResponse({
-        success: !!result.messageId,
-        messageId: result.messageId,
-        timestamp: result.timestamp ? new Date(result.timestamp * 1000).toISOString() : new Date().toISOString(),
-      });
+      if (recipientType === 'bulk') {
+        const recipients = bulkRecipients
+          .split(/[\n,;]/)
+          .map(item => item.trim())
+          .filter(Boolean)
+          .slice(0, 256)
+          .map(phone => phone.replace(/[^0-9]/g, '') + '@c.us');
+
+        if (recipients.length === 0) {
+          throw new Error(t('messageTester.bulkEmpty'));
+        }
+
+        const messages = recipients.map(chatId => {
+          const base = { chatId, type: messageType, content: {} as any };
+          if (messageType === 'text') {
+            return { ...base, content: { text: content } };
+          }
+          if (messageType === 'image') {
+            return { ...base, content: { image: { url: mediaUrl }, caption: content } };
+          }
+          if (messageType === 'video') {
+            return { ...base, content: { video: { url: mediaUrl }, caption: content } };
+          }
+          if (messageType === 'audio') {
+            return { ...base, content: { audio: { url: mediaUrl } } };
+          }
+          return { ...base, content: { document: { url: mediaUrl }, caption: content } };
+        });
+
+        result = await messageApi.sendBulk(session, messages, { concurrency });
+
+        setResponse({
+          success: true,
+          batchId: result.batchId,
+          totalMessages: result.totalMessages,
+          statusUrl: result.statusUrl,
+          timestamp: new Date().toISOString(),
+        });
+      } else {
+        const chatId = recipientType === 'group' ? targetId : targetId.replace(/[^0-9]/g, '') + '@c.us';
+
+        if (messageType === 'text') {
+          result = await messageApi.sendText(session, chatId, content);
+        } else if (messageType === 'image') {
+          result = await messageApi.sendImage(session, chatId, mediaUrl, content);
+        } else if (messageType === 'video') {
+          result = await messageApi.sendVideo(session, chatId, mediaUrl, content);
+        } else if (messageType === 'audio') {
+          result = await messageApi.sendAudio(session, chatId, mediaUrl);
+        } else {
+          result = await messageApi.sendDocument(session, chatId, mediaUrl, content);
+        }
+
+        setResponse({
+          success: !!result.messageId,
+          messageId: result.messageId,
+          timestamp: result.timestamp ? new Date(result.timestamp * 1000).toISOString() : new Date().toISOString(),
+        });
+      }
     } catch (err) {
       setResponse({
         success: false,
@@ -134,13 +182,19 @@ export function MessageTester() {
               <button className={recipientType === 'group' ? 'active' : ''} onClick={() => setRecipientType('group')}>
                 {t('messageTester.group')}
               </button>
+              <button
+                className={recipientType === 'bulk' ? 'active' : ''}
+                onClick={() => setRecipientType('bulk')}
+              >
+                {t('messageTester.bulk')}
+              </button>
             </div>
           </div>
 
           <div className="form-group">
-            <label>{recipientType === 'group' ? t('messageTester.selectGroup') : t('messageTester.recipientPhone')}</label>
             {recipientType === 'group' ? (
               <>
+                <label>{t('messageTester.selectGroup')}</label>
                 <select
                   value={selectedGroup}
                   onChange={e => setSelectedGroup(e.target.value)}
@@ -156,8 +210,31 @@ export function MessageTester() {
                 </select>
                 <span className="hint">{t('messageTester.selectGroupHint')}</span>
               </>
+            ) : recipientType === 'bulk' ? (
+              <>
+                <label>{t('messageTester.bulkRecipients')}</label>
+                <textarea
+                  value={bulkRecipients}
+                  onChange={e => setBulkRecipients(e.target.value)}
+                  placeholder={t('messageTester.bulkHint')}
+                  rows={4}
+                />
+                <span className="hint">{t('messageTester.bulkHint')}</span>
+                <div className="form-group">
+                  <label>{t('messageTester.concurrency')}</label>
+                  <input
+                    type="number"
+                    value={concurrency}
+                    onChange={e => setConcurrency(Math.max(1, Math.min(10, Number(e.target.value))))}
+                    min={1}
+                    max={10}
+                  />
+                  <span className="hint">{t('messageTester.concurrencyHint')}</span>
+                </div>
+              </>
             ) : (
               <>
+                <label>{t('messageTester.recipientPhone')}</label>
                 <input
                   type="text"
                   value={recipient}
@@ -224,7 +301,12 @@ export function MessageTester() {
           <button
             className="send-btn"
             onClick={handleSend}
-            disabled={!canWrite || isLoading || !session || (recipientType === 'group' ? !selectedGroup : !recipient)}
+            disabled={
+              !canWrite ||
+              isLoading ||
+              !session ||
+              (recipientType === 'group' ? !selectedGroup : recipientType === 'bulk' ? !bulkRecipients.trim() : !recipient)
+            }
           >
             {isLoading ? <Loader2 className="animate-spin" size={18} /> : <Send size={18} />}
             {isLoading ? t('messageTester.sending') : canWrite ? t('messageTester.send') : t('messageTester.viewOnly')}
