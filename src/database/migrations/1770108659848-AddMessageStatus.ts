@@ -28,6 +28,11 @@ export class AddMessageStatus1770108659848 implements MigrationInterface {
   // ──────────────────────────────────────────────
 
   private async upSqlite(queryRunner: QueryRunner): Promise<void> {
+    const sessionsTable = await queryRunner.getTable('sessions');
+    if (sessionsTable) {
+      return;
+    }
+
     await queryRunner.query(
       `CREATE TABLE "sessions" ("id" varchar PRIMARY KEY NOT NULL, "name" varchar(100) NOT NULL, "status" varchar(50) NOT NULL DEFAULT ('created'), "phone" varchar(20), "pushName" varchar(100), "config" text NOT NULL DEFAULT ('{}'), "proxyUrl" varchar(255), "proxyType" varchar(10), "connectedAt" datetime, "lastActiveAt" datetime, "createdAt" datetime NOT NULL DEFAULT (datetime('now')), "updatedAt" datetime NOT NULL DEFAULT (datetime('now')), CONSTRAINT "UQ_ac984ccbd8b01af155e1874e8cb" UNIQUE ("name"))`,
     );

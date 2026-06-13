@@ -251,6 +251,22 @@ describe('SessionService', () => {
         expect.any(Object),
       );
     });
+
+    it('should clean up a failed initialization so the session can be started again', async () => {
+      const session = createMockSession();
+      (repository.findOne as jest.Mock).mockResolvedValue(session);
+      (repository.update as jest.Mock).mockResolvedValue({ affected: 1 });
+      (mockEngine.initialize as jest.Mock)
+        .mockRejectedValueOnce(new Error('Protocol error (Runtime.callFunctionOn): Execution context was destroyed.'))
+        .mockResolvedValueOnce(undefined);
+
+      await expect(service.start('sess-uuid-1')).rejects.toThrow('Execution context was destroyed');
+      await expect(service.start('sess-uuid-1')).resolves.toEqual(expect.objectContaining({ id: 'sess-uuid-1' }));
+
+      expect(engineFactory.create).toHaveBeenCalledTimes(2);
+      expect(mockEngine.initialize).toHaveBeenCalledTimes(2);
+      expect(mockEngine.destroy).toHaveBeenCalled();
+    });
   });
 
   // ── stop ──────────────────────────────────────────────────────────

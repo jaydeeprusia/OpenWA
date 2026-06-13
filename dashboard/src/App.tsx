@@ -117,6 +117,58 @@ function AppContent() {
 }
 
 function App() {
+  const [apiReady, setApiReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timeoutId: number | undefined;
+
+    const checkApiReady = async () => {
+      try {
+        const response = await fetch('/api/health');
+
+        if (!cancelled && response.ok) {
+          setApiReady(true);
+          return;
+        }
+      } catch {
+        // Ignore while the API is still starting up.
+      }
+
+      if (!cancelled) {
+        timeoutId = window.setTimeout(() => {
+          void checkApiReady();
+        }, 1000);
+      }
+    };
+
+    void checkApiReady();
+
+    return () => {
+      cancelled = true;
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId);
+      }
+    };
+  }, []);
+
+  if (!apiReady) {
+    return (
+      <div
+        style={{
+          minHeight: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: '1rem',
+          color: 'var(--text-secondary, #6b7280)',
+        }}
+      >
+        Waiting for the API to start...
+      </div>
+    );
+  }
+
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>

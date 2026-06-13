@@ -16,7 +16,7 @@
     "dashboard:install": "cd dashboard && npm install",
     "dashboard:dev": "cd dashboard && npm run dev",
     "dashboard:build": "cd dashboard && npm run build",
-    "postinstall": "[ -d dashboard ] && npm run dashboard:install || true",
+    "postinstall": "node scripts/postinstall.js",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "test": "jest",
     "test:watch": "jest --watch",

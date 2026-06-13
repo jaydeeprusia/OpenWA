@@ -1,10 +1,10 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiSecurity } from '@nestjs/swagger';
 import { StatsService } from './stats.service';
 import { StatsQueryDto } from './dto/stats-query.dto';
 
 @ApiTags('Statistics')
-@ApiBearerAuth()
+@ApiSecurity('X-API-Key')
 @Controller('stats')
 export class StatsController {
   constructor(private readonly statsService: StatsService) {}
